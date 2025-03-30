@@ -74,7 +74,7 @@ function resetGame()
     skillParticles = {}  -- Table to store skill particle effects
     activeSkill = nil  -- Currently active skill
     activeSkillTimer = 0  -- Timer for active skill duration
-    skillDropThreshold = 1000  -- Score needed for first skill card
+    skillDropThreshold = 600  -- Score needed for first skill card (lowered from 1000)
     lastSkillDropScore = 0  -- Track when last skill dropped
     
     timeStopActive = false
@@ -289,7 +289,13 @@ function updateGame(dt)
     if score - lastSkillDropScore >= skillDropThreshold and #player.skills < player.maxSkills then
         spawnSkillCard()
         lastSkillDropScore = score
-        skillDropThreshold = skillDropThreshold * 2  -- Double the threshold for next skill
+        skillDropThreshold = skillDropThreshold * 1.5  -- 1.5x multiplier instead of 2x
+        
+        -- Add a small random variance to make the timing less predictable
+        skillDropThreshold = skillDropThreshold + love.math.random(-100, 100)
+        
+        -- Ensure the threshold doesn't go below a minimum value
+        skillDropThreshold = math.max(skillDropThreshold, 400)
     end
     
     -- Update skill cards

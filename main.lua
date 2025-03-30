@@ -2,9 +2,11 @@ require "Player"
 require "Bullet"
 require "Enemy"
 require "EnemyBullet"
+require "ScoreManager"  -- Add this line
 
 -- Game state management
 local gameState = "game"  -- Initial state: "game", "gameover"
+local newHighScore = false  -- Track if player achieved a new high score
 
 -- Game initialization
 function love.load()
@@ -13,6 +15,9 @@ function love.load()
     screenHeight = love.graphics.getHeight()
     gameAreaWidth = screenWidth * 0.8  -- 80% of screen width for game
     statsPanelWidth = screenWidth * 0.2  -- 20% of screen width for stats
+    
+    -- Initialize score manager
+    ScoreManager.init()
     
     -- Initialize game
     resetGame()
@@ -23,6 +28,8 @@ function resetGame()
     -- Stats tracking
     gameTime = 0
     enemiesDefeated = 0
+    score = 0
+    newHighScore = false
     
     player = Player:new()
     bullets = {}  -- Table to store player bullets
@@ -55,12 +62,17 @@ end
 function updateGame(dt)
     -- Check for game over
     if player.lives <= 0 then
+        -- Check for high score before transitioning to game over
+        newHighScore = ScoreManager.updateHighScore(score)
         gameState = "gameover"
         return
     end
 
     -- Update game time
     gameTime = gameTime + dt
+    
+    -- Add small amount of score for surviving (10 points per second)
+    score = score + (10 * dt)
     
     -- Update player
     player:update(dt)
@@ -82,9 +94,20 @@ function updateGame(dt)
                 enemy:takeDamage()
                 table.remove(bullets, i)
                 
-                -- If enemy dies from this hit, increment counter
+                -- If enemy dies from this hit, increment counter and add score
                 if enemy.health <= 0 then
                     enemiesDefeated = enemiesDefeated + 1
+                    
+                    -- Award points based on enemy type
+                    if enemy.patternType == "circle" then
+                        score = score + 100
+                    elseif enemy.patternType == "spiral" then
+                        score = score + 150
+                    elseif enemy.patternType == "aimed" then
+                        score = score + 200
+                    else
+                        score = score + 50
+                    end
                 end
                 
                 break
@@ -181,9 +204,6 @@ function drawGameOver()
     love.graphics.setColor(1, 0.3, 0.3)
     love.graphics.printf("GAME OVER", 0, screenHeight * 0.25, screenWidth, "center")
     
-    -- Show final stats
-    love.graphics.setColor(1, 1, 1)
-    
     -- Format game time (minutes:seconds)
     local minutes = math.floor(gameTime / 60)
     local seconds = math.floor(gameTime % 60)
@@ -193,6 +213,22 @@ function drawGameOver()
     local yPos = screenHeight * 0.4
     local lineHeight = 30
     
+    -- Display final score with larger font and gold color
+    love.graphics.setColor(1, 0.8, 0)  -- Gold color
+    love.graphics.printf("FINAL SCORE: " .. math.floor(score), 0, yPos, screenWidth, "center")
+    yPos = yPos + lineHeight
+    
+    -- Display high score
+    if newHighScore then
+        love.graphics.setColor(1, 1, 0.3)  -- Brighter yellow for new high score
+        love.graphics.printf("NEW HIGH SCORE!", 0, yPos, screenWidth, "center")
+    else
+        love.graphics.printf("HIGH SCORE: " .. ScoreManager.highScore, 0, yPos, screenWidth, "center")
+    end
+    yPos = yPos + lineHeight * 1.5
+    
+    -- Other stats
+    love.graphics.setColor(1, 1, 1)
     love.graphics.printf("Time Survived: " .. timeString, 0, yPos, screenWidth, "center")
     yPos = yPos + lineHeight
     
@@ -229,6 +265,20 @@ function drawStatsPanel()
     -- Draw stats with consistent spacing for easy additions
     local yPos = 60
     local lineHeight = 30
+    
+    -- Current Score stat
+    love.graphics.setColor(1, 0.8, 0)  -- Gold color for score
+    love.graphics.printf("Score:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+    love.graphics.printf(math.floor(score), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+    yPos = yPos + lineHeight
+    
+    -- High Score stat
+    love.graphics.printf("High Score:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+    love.graphics.printf(ScoreManager.highScore, gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+    yPos = yPos + lineHeight
+    
+    -- Reset to white for other stats
+    love.graphics.setColor(1, 1, 1)
     
     -- Time stat
     love.graphics.printf("Time:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")

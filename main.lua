@@ -3,6 +3,9 @@ require "Bullet"
 require "Enemy"
 require "EnemyBullet"
 
+-- Game state management
+local gameState = "game"  -- Initial state: "game", "gameover"
+
 -- Game initialization
 function love.load()
     -- Screen layout
@@ -11,6 +14,12 @@ function love.load()
     gameAreaWidth = screenWidth * 0.8  -- 80% of screen width for game
     statsPanelWidth = screenWidth * 0.2  -- 20% of screen width for stats
     
+    -- Initialize game
+    resetGame()
+end
+
+-- Reset all game variables to start a new game
+function resetGame()
     -- Stats tracking
     gameTime = 0
     enemiesDefeated = 0
@@ -31,6 +40,25 @@ end
 
 -- Game update
 function love.update(dt)
+    if gameState == "game" then
+        updateGame(dt)
+    elseif gameState == "gameover" then
+        -- Simple update for game over screen (could add animations later)
+        if love.keyboard.isDown("return") or love.keyboard.isDown("space") then
+            resetGame()
+            gameState = "game"
+        end
+    end
+end
+
+-- Update function for the active game
+function updateGame(dt)
+    -- Check for game over
+    if player.lives <= 0 then
+        gameState = "gameover"
+        return
+    end
+
     -- Update game time
     gameTime = gameTime + dt
     
@@ -87,7 +115,8 @@ function love.update(dt)
         
         -- Check for collision with player
         if checkCollision(bullet, player) then
-            -- Implement player damage here
+            -- Player takes damage when hit
+            player:takeDamage()
             table.remove(enemyBullets, i)
         -- Remove bullets that go off screen or into stats panel
         elseif bullet:isOffScreen() or bullet.x > gameAreaWidth then
@@ -105,6 +134,15 @@ end
 
 -- Game drawing
 function love.draw()
+    if gameState == "game" then
+        drawGame()
+    elseif gameState == "gameover" then
+        drawGameOver()
+    end
+end
+
+-- Draw function for the active game
+function drawGame()
     -- Set scissor to limit drawing to game area only
     love.graphics.setScissor(0, 0, gameAreaWidth, screenHeight)
     
@@ -131,6 +169,39 @@ function love.draw()
     
     -- Draw stats panel
     drawStatsPanel()
+end
+
+-- Draw game over screen
+function drawGameOver()
+    -- Set background color
+    love.graphics.setColor(0.1, 0.1, 0.2)
+    love.graphics.rectangle("fill", 0, 0, screenWidth, screenHeight)
+    
+    -- Game Over title
+    love.graphics.setColor(1, 0.3, 0.3)
+    love.graphics.printf("GAME OVER", 0, screenHeight * 0.25, screenWidth, "center")
+    
+    -- Show final stats
+    love.graphics.setColor(1, 1, 1)
+    
+    -- Format game time (minutes:seconds)
+    local minutes = math.floor(gameTime / 60)
+    local seconds = math.floor(gameTime % 60)
+    local timeString = string.format("%02d:%02d", minutes, seconds)
+    
+    -- Display stats centered
+    local yPos = screenHeight * 0.4
+    local lineHeight = 30
+    
+    love.graphics.printf("Time Survived: " .. timeString, 0, yPos, screenWidth, "center")
+    yPos = yPos + lineHeight
+    
+    love.graphics.printf("Enemies Defeated: " .. enemiesDefeated, 0, yPos, screenWidth, "center")
+    yPos = yPos + lineHeight * 2
+    
+    -- Restart instructions
+    love.graphics.setColor(0.8, 0.8, 1)
+    love.graphics.printf("Press ENTER or SPACE to restart", 0, yPos, screenWidth, "center")
 end
 
 -- Draw the stats panel on the right side
@@ -169,10 +240,10 @@ function drawStatsPanel()
     love.graphics.printf(tostring(enemiesDefeated), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
     yPos = yPos + lineHeight
     
-    -- Add more stats here as needed, following the pattern:
-    -- love.graphics.printf("Label:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
-    -- love.graphics.printf(value, gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
-    -- yPos = yPos + lineHeight
+    -- Lives stat
+    love.graphics.printf("Lives:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+    love.graphics.printf(tostring(player.lives), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+    yPos = yPos + lineHeight
     
     -- Reset line width
     love.graphics.setLineWidth(1)
@@ -188,6 +259,7 @@ function spawnEnemy()
         {1, 0.6, 0},    -- Orange
         {0.7, 0, 1}     -- Purple
     }
+    local color = colors[love.math.random(1, #colors)]
     -- Ensure enemies spawn within game area boundary
     local x = love.math.random(50, gameAreaWidth - 90)
     

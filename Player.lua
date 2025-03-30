@@ -11,6 +11,9 @@ function Player:new(x, y, width, height, speed)
     self.color = {1, 0, 0}  -- Red color (RGB values from 0 to 1)
     self.shootTimer = 0
     self.shootDelay = 0.15  -- Time between shots in seconds
+    self.lives = 3  -- Starting with 3 lives
+    self.invulnerable = false  -- Invulnerability flag after being hit
+    self.invulnerableTimer = 0  -- Timer for invulnerability period
     return self
 end
 
@@ -52,6 +55,22 @@ function Player:update(dt)
         self:shoot()
         self.shootTimer = self.shootDelay
     end
+    
+    -- Update invulnerability timer
+    if self.invulnerable then
+        self.invulnerableTimer = self.invulnerableTimer - dt
+        if self.invulnerableTimer <= 0 then
+            self.invulnerable = false
+        end
+    end
+end
+
+function Player:takeDamage()
+    if not self.invulnerable then
+        self.lives = self.lives - 1
+        self.invulnerable = true
+        self.invulnerableTimer = 2  -- 2 seconds of invulnerability
+    end
 end
 
 function Player:shoot()
@@ -61,7 +80,17 @@ function Player:shoot()
 end
 
 function Player:draw()
-    love.graphics.setColor(self.color)
+    -- Make player flash when invulnerable
+    if self.invulnerable then
+        if math.floor(love.timer.getTime() * 10) % 2 == 0 then
+            love.graphics.setColor(self.color[1], self.color[2], self.color[3], 0.5)
+        else
+            love.graphics.setColor(self.color)
+        end
+    else
+        love.graphics.setColor(self.color)
+    end
+    
     love.graphics.rectangle("fill", self.x, self.y, self.width, self.height)
     love.graphics.setColor(1, 1, 1)  -- Reset color to white
 end

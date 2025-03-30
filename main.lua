@@ -2,7 +2,9 @@ require "Player"
 require "Bullet"
 require "Enemy"
 require "EnemyBullet"
-require "ScoreManager"  -- Add this line
+require "PowerUp"
+require "ScoreManager"
+require "DifficultyManager"  -- Add this line
 
 -- Game state management
 local gameState = "game"  -- Initial state: "game", "gameover"
@@ -37,7 +39,18 @@ function resetGame()
     enemyBullets = {}  -- Table to store enemy bullets
     
     spawnTimer = 0
-    spawnDelay = 3  -- Spawn enemy every 3 seconds
+    
+    -- Initialize difficulty manager
+    DifficultyManager.init()
+    
+    -- Reset spawn delay based on initial difficulty
+    spawnDelay = DifficultyManager.getParameter("enemySpawnDelay")
+    
+    powerUps = {}  -- Table to store active power-ups
+    nextPowerUpThreshold = PowerUp.SCORE_THRESHOLDS[1]  -- Set first threshold
+    currentThresholdIndex = 1
+    powerUpMessage = nil  -- For displaying power-up notifications
+    powerUpMessageTimer = 0
     
     -- Create initial enemies
     table.insert(enemies, Enemy:new(200, 50, 40, 40, 3, {0, 0.5, 1}, "circle"))
@@ -153,6 +166,75 @@ function updateGame(dt)
         spawnEnemy()
         spawnTimer = 0
     end
+    
+    -- Check if we've hit a score threshold for spawning a power-up
+    if score >= nextPowerUpThreshold then
+        spawnPowerUp()
+        
+        -- Set next threshold
+        currentThresholdIndex = currentThresholdIndex + 1
+        if currentThresholdIndex <= #PowerUp.SCORE_THRESHOLDS then
+            nextPowerUpThreshold = PowerUp.SCORE_THRESHOLDS[currentThresholdIndex]
+        else
+            -- If we've reached the end of predefined thresholds, add a large increment
+            nextPowerUpThreshold = nextPowerUpThreshold + 2000
+        end
+    end
+    
+    -- Update power-up message
+    if powerUpMessage then
+        powerUpMessageTimer = powerUpMessageTimer - dt
+        if powerUpMessageTimer <= 0 then
+            powerUpMessage = nil
+        end
+    end
+    
+    -- Update power-ups
+    for i = #powerUps, 1, -1 do
+        local powerUp = powerUps[i]
+        powerUp:update(dt)
+        
+        -- Check for collision with player
+        if checkCollision(powerUp, player) then
+            -- Apply power-up effect
+            local name, description = powerUp:apply(player)
+            
+            -- Show message
+            powerUpMessage = {
+                name = name,
+                description = description,
+                color = powerUp.color
+            }
+            powerUpMessageTimer = 5  -- Show for 5 seconds
+            
+            -- Remove power-up from game
+            table.remove(powerUps, i)
+        elseif not powerUp.active then
+            table.remove(powerUps, i)
+        end
+    end
+    
+    -- Apply score multiplier if active
+    if player.powerUps["scoreMultiplier"] then
+        local multiplier = player.powerUps["scoreMultiplier"].value
+        score = score + (10 * dt * (multiplier - 1))  -- Add the extra score
+    end
+    
+    -- Check if difficulty level should increase
+    local difficultyIncreased = DifficultyManager.updateDifficulty(score)
+    
+    -- If difficulty increased, update spawn delay
+    if difficultyIncreased then
+        spawnDelay = DifficultyManager.getParameter("enemySpawnDelay")
+        
+        -- Show difficulty increase message
+        powerUpMessage = {
+            name = "Difficulty Increased!",
+            description = "Level " .. DifficultyManager.getLevel() .. ": " .. DifficultyManager.getLevelName(),
+            color = {1, 0.5, 0.5}  -- Red-pink color
+        }
+        powerUpMessageTimer = 3  -- Show for 3 seconds
+    end
 end
 
 -- Game drawing
@@ -179,6 +261,11 @@ function drawGame()
         bullet:draw()
     end
     
+    -- Draw power-ups
+    for _, powerUp in ipairs(powerUps) do
+        powerUp:draw()
+    end
+    
     -- Draw player
     player:draw()
     
@@ -186,6 +273,14 @@ function drawGame()
     for _, bullet in ipairs(bullets) do
         bullet:draw()
     end
+    
+    -- Draw power-up message if one is active
+    if powerUpMessage then
+        drawPowerUpMessage()
+    end
+    
+    -- Draw active power-ups indicators
+    drawActivePowerUps()
     
     -- Reset scissor
     love.graphics.setScissor()
@@ -295,6 +390,16 @@ function drawStatsPanel()
     love.graphics.printf(tostring(player.lives), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
     yPos = yPos + lineHeight
     
+    -- Add next power-up threshold info
+    love.graphics.printf("Next Power-up:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+    love.graphics.printf(nextPowerUpThreshold, gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+    yPos = yPos + lineHeight
+    
+    -- Add difficulty level to stats panel
+    love.graphics.printf("Difficulty:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+    love.graphics.printf(DifficultyManager.getLevelName(), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+    yPos = yPos + lineHeight
+    
     -- Reset line width
     love.graphics.setLineWidth(1)
 end
@@ -310,10 +415,19 @@ function spawnEnemy()
         {0.7, 0, 1}     -- Purple
     }
     local color = colors[love.math.random(1, #colors)]
-    -- Ensure enemies spawn within game area boundary
     local x = love.math.random(50, gameAreaWidth - 90)
     
-    table.insert(enemies, Enemy:new(x, 0, 40, 40, 3, color, pattern))
+    -- Get health and speed based on current difficulty
+    local health = DifficultyManager.getParameter("enemyHealth")
+    local speed = DifficultyManager.getParameter("enemySpeed")
+    
+    table.insert(enemies, Enemy:new(x, 0, 40, 40, health, color, pattern, speed))
+end
+
+function spawnPowerUp()
+    local x = love.math.random(50, gameAreaWidth - 80)
+    local y = 0
+    table.insert(powerUps, PowerUp:new(x, y))
 end
 
 function checkCollision(a, b)
@@ -321,4 +435,58 @@ function checkCollision(a, b)
            a.x + a.width > b.x and
            a.y < b.y + b.height and
            a.y + a.height > b.y
+end
+
+-- Function to draw the power-up message
+function drawPowerUpMessage()
+    -- Create a semi-transparent background
+    love.graphics.setColor(0, 0, 0, 0.7)
+    local msgWidth = gameAreaWidth * 0.6
+    local msgHeight = 80
+    local x = (gameAreaWidth - msgWidth) / 2
+    local y = screenHeight * 0.3
+    
+    love.graphics.rectangle("fill", x, y, msgWidth, msgHeight)
+    love.graphics.setColor(powerUpMessage.color)
+    love.graphics.rectangle("line", x, y, msgWidth, msgHeight)
+    
+    -- Draw the power-up name and description
+    love.graphics.printf(powerUpMessage.name, x, y + 15, msgWidth, "center")
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(powerUpMessage.description, x, y + 45, msgWidth, "center")
+end
+
+-- Function to draw indicators for active power-ups
+function drawActivePowerUps()
+    local x = 10
+    local y = screenHeight - 40
+    
+    for name, powerUp in pairs(player.powerUps) do
+        local properties
+        if name == "tripleShot" then
+            properties = PowerUp.PROPERTIES[PowerUp.TYPES.TRIPLE_SHOT]
+        elseif name == "scoreMultiplier" then
+            properties = PowerUp.PROPERTIES[PowerUp.TYPES.SCORE_MULTIPLIER]
+        elseif name == "rapidFire" then
+            properties = PowerUp.PROPERTIES[PowerUp.TYPES.RAPID_FIRE]
+        elseif name == "shield" then
+            properties = PowerUp.PROPERTIES[PowerUp.TYPES.SHIELD]
+        end
+        
+        if properties then
+            -- Draw power-up indicator
+            love.graphics.setColor(properties.color)
+            love.graphics.rectangle("fill", x, y, 25, 25)
+            
+            -- Draw timer
+            local timeLeft = math.floor(powerUp.timeLeft)
+            love.graphics.setColor(1, 1, 1)
+            love.graphics.printf(timeLeft, x, y + 5, 25, "center")
+            
+            x = x + 35
+        end
+    end
+    
+    -- Reset color
+    love.graphics.setColor(1, 1, 1)
 end

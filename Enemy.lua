@@ -1,15 +1,15 @@
 Enemy = {}
 Enemy.__index = Enemy
 
-function Enemy:new(x, y, width, height, health, color, patternType)
+function Enemy:new(x, y, width, height, health, color, patternType, speed)
     local self = setmetatable({}, Enemy)
     self.x = x or love.math.random(50, love.graphics.getWidth() - 50)
     self.y = y or 50
     self.width = width or 40
     self.height = height or 40
-    self.health = health or 3
+    self.health = health or DifficultyManager.getParameter("enemyHealth")
     self.color = color or {0, 0.5, 1}  -- Default cyan-blue
-    self.speed = 50
+    self.speed = speed or DifficultyManager.getParameter("enemySpeed")
     self.patternType = patternType or "circle"
     self.shootTimer = 0
     self.shootDelay = 1.5  -- Time between firing patterns
@@ -55,7 +55,7 @@ function Enemy:firePattern()
 end
 
 function Enemy:fireCirclePattern()
-    local bulletCount = 8
+    local bulletCount = DifficultyManager.getParameter("bulletCount", "circle") or 8
     local centerX = self.x + self.width/2
     local centerY = self.y + self.height
     
@@ -77,9 +77,10 @@ function Enemy:fireSpiralPattern()
     local angle = self.patternTimer * 5
     local centerX = self.x + self.width/2
     local centerY = self.y + self.height
+    local bulletCount = DifficultyManager.getParameter("bulletCount", "spiral") or 3
     
-    for i = 0, 2 do
-        local currentAngle = angle + (i * math.pi * 2 / 3)
+    for i = 0, bulletCount - 1 do
+        local currentAngle = angle + (i * math.pi * 2 / bulletCount)
         local bulletX = centerX - 5
         local bulletY = centerY - 5
         local bullet = EnemyBullet:new(bulletX, bulletY)
@@ -99,9 +100,11 @@ function Enemy:fireAimedPattern()
     local playerCenterY = player.y + player.height/2
     
     local angle = math.atan2(playerCenterY - centerY, playerCenterX - centerX)
+    local spreadCount = DifficultyManager.getParameter("bulletCount", "aimed") or 3
+    local halfSpread = math.floor(spreadCount / 2)
     
-    -- Create 3 bullets in a spread
-    for i = -1, 1 do
+    -- Create bullets in a spread
+    for i = -halfSpread, halfSpread do
         local spreadAngle = angle + (i * 0.2)
         local bullet = EnemyBullet:new(centerX - 5, centerY - 5)
         bullet.vx = math.cos(spreadAngle) * bullet.speed

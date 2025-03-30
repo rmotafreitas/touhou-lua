@@ -14,6 +14,8 @@ function Player:new(x, y, width, height, speed)
     self.lives = 3  -- Starting with 3 lives
     self.invulnerable = false  -- Invulnerability flag after being hit
     self.invulnerableTimer = 0  -- Timer for invulnerability period
+    self.powerUps = {}  -- Table to store active power-ups
+    self.normalShootDelay = 0.15  -- Store original shoot delay
     return self
 end
 
@@ -49,6 +51,18 @@ function Player:update(dt)
         self.y = love.graphics.getHeight() - self.height
     end
     
+    -- Update power-ups
+    for name, powerUp in pairs(self.powerUps) do
+        powerUp.timeLeft = powerUp.timeLeft - dt
+        if powerUp.timeLeft <= 0 then
+            -- Reset effects when power-up expires
+            if name == "rapidFire" then
+                self.shootDelay = self.normalShootDelay
+            end
+            self.powerUps[name] = nil
+        end
+    end
+    
     -- Shooting logic
     self.shootTimer = self.shootTimer - dt
     if love.keyboard.isDown("space") and self.shootTimer <= 0 then
@@ -66,8 +80,15 @@ function Player:update(dt)
 end
 
 function Player:takeDamage()
+    if self:hasShield() then
+        -- Shield absorbs damage
+        self.powerUps["shield"] = nil
+        return
+    end
+    
     if not self.invulnerable then
-        self.lives = self.lives - 1
+        -- Only take damage if not invulnerable
+        self:removeLife()
         self.invulnerable = true
         self.invulnerableTimer = 2  -- 2 seconds of invulnerability
     end
@@ -76,7 +97,25 @@ end
 function Player:shoot()
     local bulletX = self.x + self.width/2 - 5  -- Center the bullet horizontally
     local bulletY = self.y - 10  -- Spawn bullet at top of player
+    
+    -- Normal forward shot
     table.insert(bullets, Bullet:new(bulletX, bulletY))
+    
+    -- Triple shot if power-up is active
+    if self.powerUps["tripleShot"] then
+        -- Left diagonal shot
+        local leftBullet = Bullet:new(bulletX - 5, bulletY + 5)
+        leftBullet.vx = -leftBullet.speed * 0.3
+        leftBullet.vy = -leftBullet.speed * 0.7
+        
+        -- Right diagonal shot
+        local rightBullet = Bullet:new(bulletX + 5, bulletY + 5)
+        rightBullet.vx = rightBullet.speed * 0.3
+        rightBullet.vy = -rightBullet.speed * 0.7
+        
+        table.insert(bullets, leftBullet)
+        table.insert(bullets, rightBullet)
+    end
 end
 
 function Player:draw()
@@ -93,4 +132,28 @@ function Player:draw()
     
     love.graphics.rectangle("fill", self.x, self.y, self.width, self.height)
     love.graphics.setColor(1, 1, 1)  -- Reset color to white
+end
+
+function Player:addPowerUp(name, duration, value)
+    self.powerUps[name] = {
+        timeLeft = duration,
+        value = value or true
+    }
+    
+    -- Apply immediate effects
+    if name == "rapidFire" then
+        self.shootDelay = self.normalShootDelay / 2
+    end
+end
+
+function Player:addLife(amount)
+    self.lives = self.lives + amount
+end
+
+function Player:removeLife()
+    self.lives = self.lives - 1
+end
+
+function Player:hasShield()
+    return self.powerUps["shield"] ~= nil
 end

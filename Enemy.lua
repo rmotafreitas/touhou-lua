@@ -19,8 +19,8 @@ function Enemy:new(x, y, width, height, health, color, patternType, speed)
 end
 
 function Enemy:update(dt)
-    -- Simple movement - can be expanded
-    self.y = self.y + self.speed * dt * 0.2
+    -- Reduce the base movement multiplier from 0.2 to 0.15 for smoother gameplay
+    self.y = self.y + self.speed * dt * 0.15
     
     -- Shooting logic
     self.shootTimer = self.shootTimer - dt

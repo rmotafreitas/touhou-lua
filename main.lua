@@ -4,11 +4,21 @@ require "Enemy"
 require "EnemyBullet"
 require "PowerUp"
 require "ScoreManager"
-require "DifficultyManager"  -- Add this line
+require "DifficultyManager"
+require "Boss"  -- Add this line
+require "SpecialSkill"
 
 -- Game state management
-local gameState = "game"  -- Initial state: "game", "gameover"
-local newHighScore = false  -- Track if player achieved a new high score
+local gameState = "game"  -- States: "game", "boss", "gameover"
+local newHighScore = false
+local bossTransitionTimer = 0
+local bossRewardTimer = 0
+local currentBoss = nil
+local bossDefeated = false
+local bossMessage = nil
+local bossMessageTimer = 0
+local timeStopActive = false
+local timeStopTransitionTimer = 0
 
 -- Game initialization
 function love.load()
@@ -52,6 +62,24 @@ function resetGame()
     powerUpMessage = nil  -- For displaying power-up notifications
     powerUpMessageTimer = 0
     
+    -- Boss-related variables
+    currentBoss = nil
+    bossTransitionTimer = 0
+    bossRewardTimer = 0
+    bossDefeated = false
+    bossMessage = nil
+    bossMessageTimer = 0
+    
+    skillCards = {}  -- Table to store skill cards
+    skillParticles = {}  -- Table to store skill particle effects
+    activeSkill = nil  -- Currently active skill
+    activeSkillTimer = 0  -- Timer for active skill duration
+    skillDropThreshold = 1000  -- Score needed for first skill card
+    lastSkillDropScore = 0  -- Track when last skill dropped
+    
+    timeStopActive = false
+    timeStopTransitionTimer = 0
+    
     -- Create initial enemies
     table.insert(enemies, Enemy:new(200, 50, 40, 40, 3, {0, 0.5, 1}, "circle"))
     table.insert(enemies, Enemy:new(400, 100, 40, 40, 3, {1, 0.3, 0.7}, "spiral"))
@@ -62,6 +90,8 @@ end
 function love.update(dt)
     if gameState == "game" then
         updateGame(dt)
+    elseif gameState == "boss" then
+        updateBossFight(dt)
     elseif gameState == "gameover" then
         -- Simple update for game over screen (could add animations later)
         if love.keyboard.isDown("return") or love.keyboard.isDown("space") then
@@ -223,17 +253,264 @@ function updateGame(dt)
     -- Check if difficulty level should increase
     local difficultyIncreased = DifficultyManager.updateDifficulty(score)
     
-    -- If difficulty increased, update spawn delay
+    -- If difficulty increased, start boss fight
     if difficultyIncreased then
-        spawnDelay = DifficultyManager.getParameter("enemySpawnDelay")
+        -- Start boss transition
+        gameState = "boss"
+        bossTransitionTimer = 3  -- 3 seconds transition
         
-        -- Show difficulty increase message
-        powerUpMessage = {
-            name = "Difficulty Increased!",
-            description = "Level " .. DifficultyManager.getLevel() .. ": " .. DifficultyManager.getLevelName(),
-            color = {1, 0.5, 0.5}  -- Red-pink color
+        -- Clear all enemy bullets immediately
+        enemyBullets = {}
+        
+        -- Create a boss based on difficulty level
+        local bossType = (DifficultyManager.getLevel() - 1) % 3 + 1
+        
+        -- Debug output to see what's happening
+        print("Spawning boss: " .. bossType .. " at difficulty level " .. DifficultyManager.getLevel())
+        
+        -- For the first boss, force it to be the Triangle Guardian
+        if DifficultyManager.getLevel() == 2 then  -- First boss at level 2
+            bossType = Boss.TYPES.TRIANGLE
+            print("Forcing first boss to be Triangle Guardian")
+        end
+        
+        currentBoss = Boss:new(bossType)
+        
+        -- Show boss arrival message
+        bossMessage = {
+            name = "Boss Approaching!",
+            description = currentBoss.name,
+            color = currentBoss.color
         }
-        powerUpMessageTimer = 3  -- Show for 3 seconds
+        bossMessageTimer = 5  -- Show for 5 seconds
+    end
+    
+    -- Check if we should spawn a skill card
+    if score - lastSkillDropScore >= skillDropThreshold and #player.skills < player.maxSkills then
+        spawnSkillCard()
+        lastSkillDropScore = score
+        skillDropThreshold = skillDropThreshold * 2  -- Double the threshold for next skill
+    end
+    
+    -- Update skill cards
+    for i = #skillCards, 1, -1 do
+        local card = skillCards[i]
+        card:update(dt)
+        
+        -- Check for collision with player
+        if checkCollision(card, player) then
+            -- Add skill to player's collection
+            if player:addSkill(card.type) then
+                -- Show message
+                local properties = SpecialSkill.PROPERTIES[card.type]
+                powerUpMessage = {
+                    name = "Skill Card: " .. properties.name,
+                    description = properties.description,
+                    color = properties.color
+                }
+                powerUpMessageTimer = 5  -- Show for 5 seconds
+            end
+            
+            -- Remove card from game
+            table.remove(skillCards, i)
+        elseif not card.active then
+            table.remove(skillCards, i)
+        end
+    end
+    
+    -- Update active skill
+    if activeSkill then
+        activeSkillTimer = activeSkillTimer - dt
+        
+        -- Update skill particles
+        local particlesActive = SpecialSkill.updateParticles(skillParticles, dt)
+        
+        -- Handle skill ending
+        if activeSkillTimer <= 0 or not particlesActive then
+            -- If Time Stop is ending, start transition period
+            if timeStopActive and activeSkill == SpecialSkill.TYPES.TIME_STOP then
+                timeStopActive = false
+                timeStopTransitionTimer = 1.0  -- 1 second transition period
+            end
+            activeSkill = nil
+        end
+    end
+    
+    -- Gradually return to normal speed after Time Stop
+    local enemyTimeScale = 1.0
+    if activeSkill == SpecialSkill.TYPES.TIME_STOP then
+        -- Full Time Stop effect (20% speed)
+        enemyTimeScale = 0.2
+    elseif timeStopTransitionTimer > 0 then
+        -- Gradual transition back to normal speed
+        timeStopTransitionTimer = timeStopTransitionTimer - dt
+        -- Gradually increase from 0.2 to 1.0
+        enemyTimeScale = 0.2 + (1.0 - 0.2) * (1.0 - timeStopTransitionTimer)
+    end
+    
+    -- Update enemies with the calculated time scale
+    for i = #enemies, 1, -1 do
+        local enemy = enemies[i]
+        enemy:update(dt * enemyTimeScale)
+        
+        -- Remove enemies that are dead or move into stats panel
+        if not enemy.alive or enemy.x > gameAreaWidth then
+            table.remove(enemies, i)
+        end
+    end
+    
+    -- Same for enemy bullets - only update if not in Time Stop
+    if not (activeSkill == SpecialSkill.TYPES.TIME_STOP) then
+        -- Apply transition for bullets too
+        local bulletTimeScale = timeStopTransitionTimer > 0 and enemyTimeScale or 1.0
+        
+        for i = #enemyBullets, 1, -1 do
+            local bullet = enemyBullets[i]
+            bullet:update(dt * bulletTimeScale)
+            
+            -- Check for collision with player
+            if checkCollision(bullet, player) then
+                -- Player takes damage when hit
+                player:takeDamage()
+                table.remove(enemyBullets, i)
+            -- Remove bullets that go off screen or into stats panel
+            elseif bullet:isOffScreen() or bullet.x > gameAreaWidth then
+                table.remove(enemyBullets, i)
+            end
+        end
+    end
+end
+
+-- New function to update boss fights
+function updateBossFight(dt)
+    -- Check for game over
+    if player.lives <= 0 then
+        newHighScore = ScoreManager.updateHighScore(score)
+        gameState = "gameover"
+        return
+    end
+    
+    -- Handle boss arrival transition
+    if bossTransitionTimer > 0 then
+        bossTransitionTimer = bossTransitionTimer - dt
+        
+        -- Clear normal enemies and bullets during transition
+        if #enemies > 0 then
+            for i = #enemies, 1, -1 do
+                table.remove(enemies, i)
+            end
+        end
+        
+        -- Also ensure no bullets remain
+        if #enemyBullets > 0 then
+            enemyBullets = {}
+        end
+        
+        -- When transition completes, start the actual fight
+        if bossTransitionTimer <= 0 then
+            -- Boss has fully arrived, play is normal now
+        end
+        
+        -- Update player during transition
+        player:update(dt)
+        return
+    end
+    
+    -- Handle boss defeated sequence
+    if bossDefeated then
+        bossRewardTimer = bossRewardTimer - dt
+        
+        -- When reward sequence completes, return to normal gameplay
+        if bossRewardTimer <= 0 then
+            gameState = "game"
+            bossDefeated = false
+            return
+        end
+        
+        -- Update player during victory sequence
+        player:update(dt)
+        return
+    end
+    
+    -- Update boss
+    if currentBoss and currentBoss.alive then
+        local bossTimeScale = (activeSkill == SpecialSkill.TYPES.TIME_STOP) and 0.2 or 1
+        currentBoss:update(dt * bossTimeScale)
+    end
+    
+    -- Update player
+    player:update(dt)
+    
+    -- Update player bullets
+    for i = #bullets, 1, -1 do
+        local bullet = bullets[i]
+        bullet:update(dt)
+        
+        -- Check for collision with boss
+        if currentBoss and currentBoss.alive and checkCollisionWithBoss(bullet, currentBoss) then
+            currentBoss:takeDamage()
+            table.remove(bullets, i)
+            
+            -- Check if boss is defeated
+            if not currentBoss.alive then
+                -- Boss defeated - start reward sequence
+                bossDefeated = true
+                bossRewardTimer = 3  -- 3 seconds for reward animation
+                
+                -- Reward player with an extra life
+                player:addLife(1)
+                
+                -- Show victory message
+                bossMessage = {
+                    name = "Boss Defeated!",
+                    description = "+1 Life",
+                    color = {0, 1, 0}  -- Green
+                }
+                bossMessageTimer = 5  -- Show for 5 seconds
+            end
+        else
+            -- Only check for bullets going off screen if they didn't hit the boss
+            if bullet:isOffScreen() or bullet.x + bullet.width > gameAreaWidth then
+                table.remove(bullets, i)
+            end
+        end
+    end
+    
+    -- Update enemy bullets (skip if Time Stop is active)
+    if not (activeSkill == SpecialSkill.TYPES.TIME_STOP) then
+        for i = #enemyBullets, 1, -1 do
+            local bullet = enemyBullets[i]
+            bullet:update(dt)
+            
+            -- Check for collision with player
+            if checkCollision(bullet, player) then
+                player:takeDamage()
+                table.remove(enemyBullets, i)
+            -- Remove bullets that go off screen
+            elseif bullet:isOffScreen() or bullet.x > gameAreaWidth then
+                table.remove(enemyBullets, i)
+            end
+        end
+    end
+    
+    -- Update active skill
+    if activeSkill then
+        activeSkillTimer = activeSkillTimer - dt
+        
+        -- Update skill particles
+        local particlesActive = SpecialSkill.updateParticles(skillParticles, dt)
+        
+        if activeSkillTimer <= 0 or not particlesActive then
+            activeSkill = nil
+        end
+    end
+    
+    -- Update boss message
+    if bossMessage then
+        bossMessageTimer = bossMessageTimer - dt
+        if bossMessageTimer <= 0 then
+            bossMessage = nil
+        end
     end
 end
 
@@ -241,6 +518,8 @@ end
 function love.draw()
     if gameState == "game" then
         drawGame()
+    elseif gameState == "boss" then
+        drawBossFight()
     elseif gameState == "gameover" then
         drawGameOver()
     end
@@ -266,6 +545,16 @@ function drawGame()
         powerUp:draw()
     end
     
+    -- Draw skill cards
+    for _, card in ipairs(skillCards) do
+        card:draw()
+    end
+    
+    -- Draw active skill particles
+    if activeSkill then
+        SpecialSkill.drawParticles(skillParticles)
+    end
+    
     -- Draw player
     player:draw()
     
@@ -281,6 +570,60 @@ function drawGame()
     
     -- Draw active power-ups indicators
     drawActivePowerUps()
+    
+    -- Draw skill cards in the bottom right
+    drawSkillCards()
+    
+    -- Reset scissor
+    love.graphics.setScissor()
+    
+    -- Draw stats panel
+    drawStatsPanel()
+end
+
+-- New function to draw boss fights
+function drawBossFight()
+    -- Set scissor to limit drawing to game area
+    love.graphics.setScissor(0, 0, gameAreaWidth, screenHeight)
+    
+    -- Draw boss if transition is complete
+    if bossTransitionTimer <= 0 and currentBoss and not bossDefeated then
+        currentBoss:draw()
+    end
+    
+    -- Draw enemy bullets
+    for _, bullet in ipairs(enemyBullets) do
+        bullet:draw()
+    end
+    
+    -- Draw skill cards
+    for _, card in ipairs(skillCards) do
+        card:draw()
+    end
+    
+    -- Draw active skill particles
+    if activeSkill then
+        SpecialSkill.drawParticles(skillParticles)
+    end
+    
+    -- Draw player
+    player:draw()
+    
+    -- Draw player bullets
+    for _, bullet in ipairs(bullets) do
+        bullet:draw()
+    end
+    
+    -- Draw boss arrival/victory message
+    if bossMessage then
+        drawBossMessage()
+    end
+    
+    -- Draw active power-ups indicators
+    drawActivePowerUps()
+    
+    -- Draw skill cards in the bottom right
+    drawSkillCards()
     
     -- Reset scissor
     love.graphics.setScissor()
@@ -400,7 +743,21 @@ function drawStatsPanel()
     love.graphics.printf(DifficultyManager.getLevelName(), gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
     yPos = yPos + lineHeight
     
-    -- Reset line width
+    -- Show boss info when in boss fight
+    if gameState == "boss" and currentBoss then
+        love.graphics.setColor(currentBoss.color)
+        love.graphics.printf("BOSS FIGHT", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "center")
+        yPos = yPos + lineHeight
+        
+        -- Show boss health percentage
+        local healthPercent = math.floor((currentBoss.health / currentBoss.maxHealth) * 100)
+        love.graphics.printf("Boss Health:", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "left")
+        love.graphics.printf(healthPercent .. "%", gameAreaWidth + 10, yPos, statsPanelWidth - 20, "right")
+        yPos = yPos + lineHeight
+    end
+    
+    -- Reset color and line width
+    love.graphics.setColor(1, 1, 1)
     love.graphics.setLineWidth(1)
 end
 
@@ -430,11 +787,32 @@ function spawnPowerUp()
     table.insert(powerUps, PowerUp:new(x, y))
 end
 
+function spawnSkillCard()
+    local x = love.math.random(50, gameAreaWidth - 80)
+    local y = 0
+    table.insert(skillCards, SpecialSkill:new(x, y))
+end
+
 function checkCollision(a, b)
     return a.x < b.x + b.width and
            a.x + a.width > b.x and
            a.y < b.y + b.height and
            a.y + a.height > b.y
+end
+
+-- Function to check collision with boss (circular/polygon)
+function checkCollisionWithBoss(bullet, boss)
+    local bulletCenterX = bullet.x + bullet.width/2
+    local bulletCenterY = bullet.y + bullet.height/2
+    local bossCenterX = boss.x + boss.width/2
+    local bossCenterY = boss.y + boss.height/2
+    
+    -- Simple circular collision for boss
+    local dx = bulletCenterX - bossCenterX
+    local dy = bulletCenterY - bossCenterY
+    local distance = math.sqrt(dx * dx + dy * dy)
+    
+    return distance < boss.radius
 end
 
 -- Function to draw the power-up message
@@ -454,6 +832,26 @@ function drawPowerUpMessage()
     love.graphics.printf(powerUpMessage.name, x, y + 15, msgWidth, "center")
     love.graphics.setColor(1, 1, 1)
     love.graphics.printf(powerUpMessage.description, x, y + 45, msgWidth, "center")
+end
+
+-- Function to draw boss messages
+function drawBossMessage()
+    -- Create a semi-transparent background
+    love.graphics.setColor(0, 0, 0, 0.8)
+    local msgWidth = gameAreaWidth * 0.7
+    local msgHeight = 100
+    local x = (gameAreaWidth - msgWidth) / 2
+    local y = screenHeight * 0.4
+    
+    love.graphics.rectangle("fill", x, y, msgWidth, msgHeight)
+    love.graphics.setColor(bossMessage.color)
+    love.graphics.rectangle("line", x, y, msgWidth, msgHeight)
+    
+    -- Draw the message name and description
+    love.graphics.setColor(bossMessage.color)
+    love.graphics.printf(bossMessage.name, x, y + 20, msgWidth, "center")
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(bossMessage.description, x, y + 55, msgWidth, "center")
 end
 
 -- Function to draw indicators for active power-ups
@@ -489,4 +887,180 @@ function drawActivePowerUps()
     
     -- Reset color
     love.graphics.setColor(1, 1, 1)
+end
+
+-- Add function to draw skill cards in the bottom right
+function drawSkillCards()
+    local cardWidth = 30
+    local cardHeight = 40
+    local padding = 5
+    local startX = gameAreaWidth - (cardWidth + padding) * player.maxSkills
+    local y = screenHeight - cardHeight - padding
+    
+    -- Draw skill card slots (empty slots)
+    for i = 1, player.maxSkills do
+        -- Draw empty slot
+        love.graphics.setColor(0.2, 0.2, 0.3, 0.5)
+        love.graphics.rectangle("fill", startX + (i-1) * (cardWidth + padding), y, cardWidth, cardHeight)
+        love.graphics.setColor(0.5, 0.5, 0.6, 0.8)
+        love.graphics.rectangle("line", startX + (i-1) * (cardWidth + padding), y, cardWidth, cardHeight)
+    end
+    
+    -- Draw actual skill cards
+    for i, skillType in ipairs(player.skills) do
+        local properties = SpecialSkill.PROPERTIES[skillType]
+        
+        -- Draw card background
+        love.graphics.setColor(0.2, 0.2, 0.3)
+        love.graphics.rectangle("fill", startX + (i-1) * (cardWidth + padding), y, cardWidth, cardHeight)
+        
+        -- Draw colored border
+        love.graphics.setColor(properties.color)
+        love.graphics.rectangle("line", startX + (i-1) * (cardWidth + padding), y, cardWidth, cardHeight)
+        
+        -- Draw inner pattern
+        local centerX = startX + (i-1) * (cardWidth + padding) + cardWidth/2
+        local centerY = y + cardHeight/2
+        local radius = cardWidth * 0.3
+        
+        love.graphics.setColor(properties.color[1], properties.color[2], properties.color[3], 0.8)
+        
+        -- Draw a symbol based on skill type
+        if skillType == SpecialSkill.TYPES.STAR_SHOWER then
+            drawStar(centerX, centerY, radius)
+        elseif skillType == SpecialSkill.TYPES.TIME_STOP then
+            drawClock(centerX, centerY, radius)
+        elseif skillType == SpecialSkill.TYPES.SPIRIT_BOMB then
+            drawSpiral(centerX, centerY, radius)
+        end
+    end
+    
+    -- Reset color
+    love.graphics.setColor(1, 1, 1)
+    
+    -- Draw instruction hint if player has skills
+    if #player.skills > 0 then
+        love.graphics.setColor(1, 1, 1, 0.7)
+        love.graphics.printf("Press ENTER to use", startX, y - 20, player.maxSkills * (cardWidth + padding), "center")
+    end
+end
+
+-- Helper functions for drawing the symbols
+function drawStar(x, y, radius)
+    local points = {}
+    for i = 1, 5 do
+        local angle = (i * 2 * math.pi / 5) - math.pi/2
+        table.insert(points, x + radius * math.cos(angle))
+        table.insert(points, y + radius * math.sin(angle))
+        
+        local innerAngle = ((i + 0.5) * 2 * math.pi / 5) - math.pi/2
+        table.insert(points, x + radius * 0.4 * math.cos(innerAngle))
+        table.insert(points, y + radius * 0.4 * math.sin(innerAngle))
+    end
+    love.graphics.polygon("fill", points)
+end
+
+function drawClock(x, y, radius)
+    love.graphics.circle("line", x, y, radius)
+    -- Draw hour hand
+    love.graphics.line(x, y, x + radius * 0.5 * math.cos(-math.pi/3), y + radius * 0.5 * math.sin(-math.pi/3))
+    -- Draw minute hand
+    love.graphics.line(x, y, x + radius * 0.7 * math.cos(math.pi/6), y + radius * 0.7 * math.sin(math.pi/6))
+end
+
+function drawSpiral(x, y, radius)
+    local points = {}
+    local spirals = 2
+    local steps = 20
+    
+    for i = 0, steps do
+        local t = i / steps
+        local angle = t * math.pi * 2 * spirals
+        local r = t * radius
+        table.insert(points, x + r * math.cos(angle))
+        table.insert(points, y + r * math.sin(angle))
+    end
+    
+    love.graphics.line(points)
+    love.graphics.circle("fill", x, y, radius * 0.2)
+end
+
+-- Add to love.keypressed function (create if missing)
+function love.keypressed(key)
+    if key == "return" or key == "kpenter" then
+        -- Activate special skill when Enter is pressed
+        if gameState == "game" or gameState == "boss" then
+            activateSkill()
+        end
+    end
+end
+
+-- Function to activate a skill
+function activateSkill()
+    -- Only activate if no skill is currently active
+    if not activeSkill and #player.skills > 0 then
+        local skillType = player:useSkill()
+        if skillType then
+            activeSkill = skillType
+            local properties = SpecialSkill.PROPERTIES[skillType]
+            activeSkillTimer = properties.duration
+            
+            -- Create particles
+            skillParticles = SpecialSkill.createParticles(
+                skillType, 
+                0, 0, 
+                gameAreaWidth, 
+                screenHeight
+            )
+            
+            -- Apply immediate effects based on skill type
+            if skillType == SpecialSkill.TYPES.STAR_SHOWER then
+                applyStarShowerEffect()
+            elseif skillType == SpecialSkill.TYPES.SPIRIT_BOMB then
+                applySpiritBombEffect()
+            end
+            
+            -- Show skill activation message
+            powerUpMessage = {
+                name = "SPECIAL SKILL: " .. properties.name,
+                description = properties.description,
+                color = properties.color
+            }
+            powerUpMessageTimer = 5  -- Show for 5 seconds
+            
+            -- Track if we're using Time Stop for smooth transition later
+            if skillType == SpecialSkill.TYPES.TIME_STOP then
+                timeStopActive = true
+            end
+        end
+    end
+end
+
+-- Apply Star Shower effect
+function applyStarShowerEffect()
+    -- Damage all enemies
+    for _, enemy in ipairs(enemies) do
+        enemy:takeDamage(SpecialSkill.PROPERTIES[SpecialSkill.TYPES.STAR_SHOWER].damage)
+    end
+    
+    -- Also damage boss if fighting one
+    if gameState == "boss" and currentBoss and currentBoss.alive then
+        currentBoss:takeDamage(SpecialSkill.PROPERTIES[SpecialSkill.TYPES.STAR_SHOWER].damage * 2)
+    end
+end
+
+-- Apply Spirit Bomb effect
+function applySpiritBombEffect()
+    -- Clear all enemy bullets
+    enemyBullets = {}
+    
+    -- Heavy damage to all enemies
+    for _, enemy in ipairs(enemies) do
+        enemy:takeDamage(SpecialSkill.PROPERTIES[SpecialSkill.TYPES.SPIRIT_BOMB].damage)
+    end
+    
+    -- Also damage boss if fighting one
+    if gameState == "boss" and currentBoss and currentBoss.alive then
+        currentBoss:takeDamage(SpecialSkill.PROPERTIES[SpecialSkill.TYPES.SPIRIT_BOMB].damage * 3)
+    end
 end

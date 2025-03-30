@@ -22,25 +22,25 @@ DifficultyManager = {
         -- Level 1 (default/starting values)
         [1] = {
             enemySpawnDelay = 3.0,
-            enemyHealth = 3,
-            enemyBulletSpeed = 150,
-            enemySpeed = 50,
+            enemyHealth = 2,
+            enemyBulletSpeed = 80,  -- Starting speed
+            enemySpeed = 40,
             bulletCount = {  -- Number of bullets in patterns
-                circle = 8,
-                spiral = 3,
-                aimed = 3
+                circle = 6,
+                spiral = 2,
+                aimed = 2
             }
         },
-        -- Higher levels increase difficulty
-        [2] = { enemySpawnDelay = 2.7, enemyHealth = 3, enemyBulletSpeed = 160, enemySpeed = 55 },
-        [3] = { enemySpawnDelay = 2.4, enemyHealth = 4, enemyBulletSpeed = 170, enemySpeed = 60 },
-        [4] = { enemySpawnDelay = 2.1, enemyHealth = 4, enemyBulletSpeed = 180, enemySpeed = 65, bulletCount = { circle = 10 } },
-        [5] = { enemySpawnDelay = 1.8, enemyHealth = 5, enemyBulletSpeed = 190, enemySpeed = 70 },
-        [6] = { enemySpawnDelay = 1.5, enemyHealth = 5, enemyBulletSpeed = 200, enemySpeed = 75, bulletCount = { spiral = 4, aimed = 4 } },
-        [7] = { enemySpawnDelay = 1.2, enemyHealth = 6, enemyBulletSpeed = 210, enemySpeed = 80 },
-        [8] = { enemySpawnDelay = 1.0, enemyHealth = 6, enemyBulletSpeed = 220, enemySpeed = 85, bulletCount = { circle = 12 } },
-        [9] = { enemySpawnDelay = 0.8, enemyHealth = 7, enemyBulletSpeed = 230, enemySpeed = 90, bulletCount = { spiral = 5, aimed = 5 } },
-        [10] = { enemySpawnDelay = 0.7, enemyHealth = 8, enemyBulletSpeed = 240, enemySpeed = 95, bulletCount = { circle = 16, spiral = 6, aimed = 6 } }
+        -- More gentle progression
+        [2] = { enemySpawnDelay = 2.9, enemyHealth = 2, enemyBulletSpeed = 90, enemySpeed = 45 },
+        [3] = { enemySpawnDelay = 2.8, enemyHealth = 3, enemyBulletSpeed = 100, enemySpeed = 50 },
+        [4] = { enemySpawnDelay = 2.6, enemyHealth = 3, enemyBulletSpeed = 110, enemySpeed = 55, bulletCount = { circle = 8 } },
+        [5] = { enemySpawnDelay = 2.4, enemyHealth = 4, enemyBulletSpeed = 120, enemySpeed = 60 },
+        [6] = { enemySpawnDelay = 2.2, enemyHealth = 4, enemyBulletSpeed = 130, enemySpeed = 62, bulletCount = { spiral = 3, aimed = 3 } },
+        [7] = { enemySpawnDelay = 2.0, enemyHealth = 5, enemyBulletSpeed = 140, enemySpeed = 65 },
+        [8] = { enemySpawnDelay = 1.8, enemyHealth = 5, enemyBulletSpeed = 150, enemySpeed = 68, bulletCount = { circle = 10 } },
+        [9] = { enemySpawnDelay = 1.6, enemyHealth = 6, enemyBulletSpeed = 160, enemySpeed = 70, bulletCount = { spiral = 4, aimed = 4 } },
+        [10] = { enemySpawnDelay = 1.4, enemyHealth = 6, enemyBulletSpeed = 170, enemySpeed = 75, bulletCount = { circle = 12, spiral = 5, aimed = 5 } }
     }
 }
 
@@ -122,6 +122,20 @@ function DifficultyManager.getLevelName()
         "Lunatic"
     }
     return names[DifficultyManager.currentLevel]
+end
+
+-- Add this function to get boss info
+function DifficultyManager.getBossInfo()
+    -- Return boss type based on level (cycle through types)
+    local bossType = ((DifficultyManager.currentLevel - 1) % 3) + 1
+    
+    if bossType == 1 then
+        return "Triangle Guardian", {1, 0.3, 0}
+    elseif bossType == 2 then
+        return "Hexagon Overlord", {0.4, 0, 0.8}
+    else
+        return "Octagon Destroyer", {0, 0.6, 0.8}
+    end
 end
 
 return DifficultyManager

@@ -16,6 +16,8 @@ function Player:new(x, y, width, height, speed)
     self.invulnerableTimer = 0  -- Timer for invulnerability period
     self.powerUps = {}  -- Table to store active power-ups
     self.normalShootDelay = 0.15  -- Store original shoot delay
+    self.skills = {}  -- Table to store collected skills (max 2)
+    self.maxSkills = 2  -- Maximum number of skills that can be held
     return self
 end
 
@@ -156,4 +158,20 @@ end
 
 function Player:hasShield()
     return self.powerUps["shield"] ~= nil
+end
+
+function Player:addSkill(skillType)
+    if #self.skills < self.maxSkills then
+        table.insert(self.skills, skillType)
+        return true
+    end
+    return false  -- Cannot add more skills
+end
+
+function Player:useSkill()
+    if #self.skills > 0 then
+        local skillType = table.remove(self.skills, 1)  -- Remove and get first skill
+        return skillType
+    end
+    return nil  -- No skills available
 end

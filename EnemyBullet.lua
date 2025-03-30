@@ -7,7 +7,11 @@ function EnemyBullet:new(x, y)
     self.y = y
     self.width = 10
     self.height = 10
-    self.speed = DifficultyManager.getParameter("enemyBulletSpeed") or 150
+    
+    -- Cap the maximum speed regardless of difficulty level
+    local baseSpeed = DifficultyManager.getParameter("enemyBulletSpeed") or 150
+    self.speed = math.min(baseSpeed, 200)  -- Cap at 200
+    
     self.vx = 0  -- Horizontal velocity
     self.vy = 0  -- Vertical velocity
     self.color = {1, 0.3, 0.3}  -- Pink-red
